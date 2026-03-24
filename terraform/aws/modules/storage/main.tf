@@ -173,3 +173,118 @@ resource "aws_s3_bucket_policy" "km_badly_configured_bucket_policy" {
     ]
   })
 }
+
+# ---------------------------------------------------------
+# Misconfigured VPC - no flow logs, overly permissive NACLs
+# ---------------------------------------------------------
+resource "aws_vpc" "km_insecure_vpc" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  # No flow logs enabled
+
+  tags = merge(var.default_tags, {
+    Name = "km_insecure_vpc_${var.environment}"
+  })
+}
+
+resource "aws_subnet" "km_insecure_public_subnet" {
+  vpc_id                  = aws_vpc.km_insecure_vpc.id
+  cidr_block              = "10.0.1.0/24"
+  map_public_ip_on_launch = true
+  availability_zone       = "us-east-1a"
+
+  tags = merge(var.default_tags, {
+    Name = "km_insecure_public_subnet_${var.environment}"
+  })
+}
+
+resource "aws_internet_gateway" "km_insecure_igw" {
+  vpc_id = aws_vpc.km_insecure_vpc.id
+
+  tags = merge(var.default_tags, {
+    Name = "km_insecure_igw_${var.environment}"
+  })
+}
+
+# ---------------------------------------------------------
+# Misconfigured RDS - publicly accessible, unencrypted,
+# no backups, no multi-AZ, no deletion protection,
+# no IAM auth, wide-open security group
+# ---------------------------------------------------------
+resource "aws_security_group" "km_insecure_rds_sg" {
+  name   = "km_insecure_rds_sg_${var.environment}"
+  vpc_id = aws_vpc.km_insecure_vpc.id
+
+  # Allow ALL inbound traffic on all ports
+  ingress {
+    from_port   = 0
+    to_port     = 65535
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(var.default_tags, {
+    Name = "km_insecure_rds_sg_${var.environment}"
+  })
+}
+
+resource "aws_db_subnet_group" "km_insecure_db_subnet" {
+  name       = "km-insecure-db-subnet-${var.environment}"
+  subnet_ids = [aws_subnet.km_insecure_public_subnet.id]
+
+  tags = merge(var.default_tags, {
+    Name = "km_insecure_db_subnet_${var.environment}"
+  })
+}
+
+resource "aws_db_instance" "km_insecure_db" {
+  identifier                = "km-insecure-db-${var.environment}"
+  allocated_storage         = 20
+  engine                    = "mysql"
+  engine_version            = "5.7"
+  instance_class            = "db.t3.micro"
+  username                  = "admin"
+  password                  = "password123"
+
+  # Publicly accessible
+  publicly_accessible       = true
+
+  # No encryption
+  storage_encrypted         = false
+
+  # No backups
+  backup_retention_period   = 0
+
+  # No multi-AZ
+  multi_az                  = false
+
+  # No deletion protection
+  deletion_protection       = false
+
+  # Skip final snapshot
+  skip_final_snapshot       = true
+
+  # No IAM authentication
+  iam_database_authentication_enabled = false
+
+  # No enhanced monitoring
+  # No performance insights
+  # No auto minor version upgrade
+  auto_minor_version_upgrade = false
+
+  vpc_security_group_ids    = [aws_security_group.km_insecure_rds_sg.id]
+  db_subnet_group_name      = aws_db_subnet_group.km_insecure_db_subnet.name
+
+  tags = merge(var.default_tags, {
+    Name = "km_insecure_db_${var.environment}"
+  })
+}
